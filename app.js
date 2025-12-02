@@ -2314,14 +2314,132 @@ function exportCurrentChantierAsCSV(){
   URL.revokeObjectURL(url);
 }
 
+function findOuvrierById(id){
+  if(!currentData || !Array.isArray(currentData.ouvriers)) return null;
+  return currentData.ouvriers.find(o=>o.id===id) || null;
+}
+
+function findMateriauById(id){
+  if(!currentData || !Array.isArray(currentData.materiaux)) return null;
+  return currentData.materiaux.find(m=>m.id===id) || null;
+}
+
+function findLocaliteById(id){
+  if(!currentData) return null;
+  if(id === "localite_unique"){ ensureLocalite(currentData); return currentData.localite; }
+  if(currentData.localites && Array.isArray(currentData.localites)){
+    return currentData.localites.find(l=>l.id===id) || null;
+  }
+  return null;
+}
+
+function exportCurrentChantierAsExcel(){
+  if(!currentData){
+    alert("Aucune donnée à exporter.");
+    return;
+  }
+  if(!window.XLSX){
+    alert("La bibliothèque Excel n'est pas disponible.");
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+  const totals = computeTotals();
+  const rateDescription = formatSarRateDescription();
+  const sarLastUpdate = currentUserData && currentUserData.sarRateUpdatedAt
+    ? new Date(currentUserData.sarRateUpdatedAt).toLocaleString("fr-FR")
+    : "";
+
+  const overview = [
+    ["Utilisateur", currentUser || ""],
+    ["Chantier", currentData.nom || "Chantier"],
+    ["Budget initial (FCFA)", currentData.budgetInitial || 0],
+    ["Budget initial (SAR)", formatSarAmountFromXof(currentData.budgetInitial || 0)],
+    ["Note budget", currentData.budgetNote || ""],
+    ["Dépenses payées", totals.depenses],
+    ["Solde disponible", totals.solde],
+    ["Dettes fournisseurs", totals.dettes],
+    ["Taux SAR", rateDescription],
+    ["Dernière mise à jour du taux", sarLastUpdate]
+  ];
+
+  if(currentData.localite){
+    overview.push(["Localité - terrain", currentData.localite.terrain || ""]);
+    overview.push(["Localité - étendue", currentData.localite.etendue || ""]);
+    overview.push(["Localité - superficie", currentData.localite.superficie || ""]);
+    overview.push(["Localité - prix", currentData.localite.prix || ""]);
+    overview.push(["Localité - mode paiement", currentData.localite.modePaiement || ""]);
+    overview.push(["Localité - montant payé", currentData.localite.montantPaye || ""]);
+    overview.push(["Localité - date achat", currentData.localite.dateAchat || ""]);
+  }
+
+  const overviewSheet = XLSX.utils.aoa_to_sheet(overview);
+  XLSX.utils.book_append_sheet(wb, overviewSheet, "Synthèse");
+
+  const materiauxAoA = [
+    ["Nom", "Montant total (FCFA)", "Quantité", "Catégorie", "Date", "Paiement", "Montant payé"]
+  ];
+  (currentData.materiaux || []).forEach(m=>{
+    materiauxAoA.push([
+      m.nom || "",
+      m.montantTotal || 0,
+      m.quantite || 0,
+      m.categorie || "",
+      m.date || "",
+      m.payeACredit ? "Crédit" : "Comptant",
+      m.montantPaye || 0
+    ]);
+  });
+  const materiauxSheet = XLSX.utils.aoa_to_sheet(materiauxAoA);
+  XLSX.utils.book_append_sheet(wb, materiauxSheet, "Matériaux");
+
+  const ouvriersAoA = [["Nom", "Métier", "Montant convenu", "Montant versé", "Reste à payer", "Date début"]];
+  (currentData.ouvriers || []).forEach(o=>{
+    const restant = Math.max(0, (o.montantConvenu || 0) - (o.montantVerse || 0));
+    ouvriersAoA.push([
+      o.nom || "",
+      o.metier || "",
+      o.montantConvenu || 0,
+      o.montantVerse || 0,
+      restant,
+      o.dateDebut || ""
+    ]);
+  });
+  const ouvriersSheet = XLSX.utils.aoa_to_sheet(ouvriersAoA);
+  XLSX.utils.book_append_sheet(wb, ouvriersSheet, "Ouvriers");
+
+  const transactionsAoA = [["Date", "Type", "Description", "Montant", "Ouvrier", "Matériau", "Localité"]];
+  (currentData.transactions || []).forEach(t=>{
+    transactionsAoA.push([
+      t.date || "",
+      t.type || "",
+      t.description || "",
+      t.montant || 0,
+      t.ouvrierId ? findOuvrierById(t.ouvrierId)?.nom || "" : "",
+      t.materiauId ? findMateriauById(t.materiauId)?.nom || "" : "",
+      t.localiteId ? findLocaliteById(t.localiteId)?.terrain || "" : ""
+    ]);
+  });
+  const transactionsSheet = XLSX.utils.aoa_to_sheet(transactionsAoA);
+  XLSX.utils.book_append_sheet(wb, transactionsSheet, "Transactions");
+
+  const fileName = (currentData.nom || "chantier") + "_export.xlsx";
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 if(btnExportExcel){
   btnExportExcel.addEventListener("click", ()=>{
-    if(!currentData){
-      alert("Aucune donnée à exporter.");
-      return;
-    }
-    exportCurrentChantierAsCSV();
-    addLog("Export CSV/Excel du chantier actif.");
+    exportCurrentChantierAsExcel();
+    addLog("Export Excel structuré du chantier actif.");
   });
 }
 
